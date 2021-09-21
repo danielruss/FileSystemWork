@@ -1,0 +1,187 @@
+<html>
+  <head>
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+    <title>Playing with the File System Access API -- One</title>
+    <style>
+      .header {
+        background-color: black;
+        padding: 5px;
+        margin: 5px;
+        color: beige;
+        font-family: "Courier New", Courier, monospace;
+      }
+      button {
+        margin: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">File: <span id="fileNameSpan"></span></div>
+
+    <form>
+      <button id="uploadButton" type="button">upload File</button>
+      <button id="clearButton" type="button">clear table</button>
+      <button id="saveButton" type="button">save to JSON</button>
+    </form>
+
+    <fieldset id="tablesetElement">
+      <legend id="legend1"></legend>
+      <table>
+        <thead id="cid_head">
+          <tr>
+            <th>concept id</th>
+            <th>Variable Label</th>
+            <th>Variable Name</th>
+            <th>Primary Source</th>
+            <th>Required</th>
+            <th>PII</th>
+          </tr>
+        </thead>
+        <tbody id="cid_body"></tbody>
+      </table>
+    </fieldset>
+    <div id="outDiv"></div>
+  </body>
+  <script>
+    const lf_data_key = "FSW_Test1";
+    const lf_filename_key = "FSW_Test1_fname";
+    const lf_filehandle_key = "FSW_filehandle";
+    const tableFieldsetElement = document.getElementById("tablesetElement");
+    const tableElement = document.getElementById("cid_body");
+    const fileNameElement = document.getElementById("fileNameSpan");
+    const legend1Element = document.getElementById("legend1");
+    let fileHandle;
+
+    function clearTable() {
+      tableFieldsetElement.style.display = "none";
+      tableElement.innerText = "";
+      fileNameElement.innerText = "";
+      legend1Element.innerText = "";
+      checkTableView();
+      localforage.removeItem(lf_data_key);
+      localforage.removeItem(lf_filename_key);
+    }
+
+    function checkTableView() {
+      let disp = tableElement.childElementCount > 0 ? "revert" : "none";
+      // show or hide the fieldset + the clear button
+      tableFieldsetElement.style.display = disp;
+      document.getElementById("clearButton").style.display = disp;
+      document.getElementById("saveButton").style.display = disp;
+    }
+    async function buildTable(obj) {
+      const out = document.getElementById("outDiv");
+      if (!Array.isArray(obj)) {
+        out.insertAdjacentHTML("beforeend", '<div class="error">expected a json array, but it was not</div>');
+        return;
+      }
+      let columns = ["ConceptId", "VariableLabel", "VariableName", "PrimarySource", "Required", "PII"];
+      obj.forEach((row, rowIndx) => {
+        if (columns.every((c) => Object.getOwnPropertyNames(row).includes(c))) {
+          const trElement = document.createElement("tr");
+          columns.forEach((c) => {
+            if (c != "PII") {
+              let cellElement = document.createElement("td");
+              cellElement.innerText = row[c];
+              trElement.insertAdjacentElement("beforeend", cellElement);
+            } else {
+              let cellElement = document.createElement("select");
+              let yesOption = document.createElement("option");
+              yesOption.value = "Yes";
+              yesOption.innerText = "Yes";
+              cellElement.insertAdjacentElement("beforeend", yesOption);
+              let noOption = document.createElement("option");
+              noOption.value = "No";
+              noOption.innerText = "No";
+              cellElement.insertAdjacentElement("beforeend", noOption);
+              cellElement.value = row[c];
+              cellElement.addEventListener("change", (event) => {
+                obj[rowIndx].PII = cellElement.value;
+                console.log(obj[rowIndx]);
+                localforage.setItem(lf_data_key, obj);
+              });
+              trElement.insertAdjacentElement("beforeend", cellElement);
+            }
+          });
+          tableElement.insertAdjacentElement("beforeend", trElement);
+        }
+      });
+      localforage.setItem(lf_data_key, obj);
+      checkTableView();
+    }
+
+    document.getElementById("uploadButton").addEventListener("click", async (event) => {
+      [fileHandle] = await window.showOpenFilePicker({
+        types: [
+          {
+            description: "json data",
+            accept: {
+              "application/json": ".json",
+            },
+          },
+        ],
+      });
+      console.log(fileHandle);
+      clearTable();
+      const file = await fileHandle.getFile();
+      fileNameElement.innerText = file.name;
+      legend1Element.innerText = file.name;
+      localforage.setItem(lf_filehandle_key, fileHandle);
+      localforage.setItem(lf_filename_key, file.name);
+      file.text().then((text) => buildTable(JSON.parse(text)));
+    });
+
+    localforage
+      .getItem(lf_filename_key)
+      .then((fname) => {
+        if (!!fname) {
+          fileNameElement.innerText = fname;
+          legend1Element.innerText = fname;
+        }
+      })
+      .catch((e) => console.error(e));
+    localforage
+      .getItem(lf_data_key)
+      .then((v) => {
+        if (!!v) buildTable(v);
+      })
+      .then(() => {
+        console.log(tableElement.childElementCount);
+        checkTableView();
+      })
+      .catch((e) => console.error(e));
+
+    document.getElementById("clearButton").addEventListener("click", clearTable);
+
+    async function verifyPermission(fileHandle) {
+      console.log("... in verify permission");
+      const options = { mode: "readwrite" };
+      // Check if permission was already granted. If so, return true.
+      if ((await fileHandle.queryPermission(options)) === "granted") {
+        return true;
+      }
+      // Request permission. If the user grants permission, return true.
+      if ((await fileHandle.requestPermission(options)) === "granted") {
+        return true;
+      }
+      // The user didn't grant permission, so return false.
+      return false;
+    }
+
+    async function saveFile() {
+      const file_handle = await localforage.getItem(lf_filehandle_key);
+      await verifyPermission(file_handle);
+      console.log("saving file: ", (await file_handle.getFile()).name);
+      console.log(file_handle);
+      const writeable = await file_handle.createWritable();
+      console.log(writeable);
+      const contents = await localforage
+        .getItem(lf_data_key)
+        .then((dta) => new Blob([JSON.stringify(dta)], { type: "application/json" }));
+      console.log(contents);
+      await writeable.write(contents);
+      await writeable.close();
+    }
+    document.getElementById("saveButton").addEventListener("click", saveFile);
+  </script>
+</html>
